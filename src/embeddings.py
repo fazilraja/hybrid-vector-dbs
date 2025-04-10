@@ -9,7 +9,9 @@ import chamois
 import logging
 from tabulate import tabulate
 import textwrap
+import nest_asyncio
 
+nest_asyncio.apply()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY:
@@ -74,15 +76,17 @@ def get_embeddings(
                         model="text-embedding-3-small",
                         input=batch_case_text,
                         dimensions=512
-                    )
+                    ).data[0].embedding
+                    print(f"Embeddings: {embeddings}")
                     for i, text in enumerate(batch_case_text):
+                        print(f"Batch text: {text}")
                         # Find original title for the corresponding case_id in the batch
                         original_title = df.loc[df['case_id'] == batch_ids[i], 'case_title'].iloc[0]
                         result_list.append({
                             'case_id': batch_ids[i],
                             'case_title': original_title, # Add case_title here
                             'case_text': text,
-                            'embeddings': embeddings[i]
+                            'embeddings': embeddings
                         })
                     total_batches += 1
                 except Exception as e:
@@ -111,7 +115,7 @@ def get_embeddings(
                 model="text-embedding-3-small",
                 input=batch_case_text,
                 dimensions=512
-            )
+            ).data[0].embedding
             for i, text in enumerate(batch_case_text):
                  # Find original title for the corresponding case_id in the batch
                  original_title = df.loc[df['case_id'] == batch_ids[i], 'case_title'].iloc[0]
@@ -119,7 +123,7 @@ def get_embeddings(
                     'case_id': batch_ids[i],
                     'case_title': original_title, # Add case_title here
                     'case_text': text,
-                    'embeddings': embeddings[i]
+                    'embeddings': embeddings
                  })
             total_batches += 1
         except Exception as e:
@@ -134,81 +138,9 @@ def get_embeddings(
     print(f"Completed in {duration:.2f} seconds.")
     print(f"Total number of tokens: {total_tokens:,}")
     print(f"Total number of batches: {total_batches:,}")
-    print(f"Money burned: ${money_burned:.6f} - Thanks, Invest Ottawa ♥") # Added the thanks!
-
+    print(f"Money burned: ${money_burned:.6f}")
     return result_list
 
-@chamois.embed("openai:text-embedding-3-small", dims=512)
-async def process_texts(texts: List[str]) -> List[str]:
-    """
-    Process a list of texts to get embeddings using chamois.
-    
-    Args:
-        texts: List of texts to embed
-        
-    Returns:
-        List of strings that will be converted to Embedding objects by the decorator
-    """
-    return texts
-
-async def get_embeddings_chamois(
-    df: pd.DataFrame,
-    num_rows: int = 10,
-) -> List[Dict[str, Any]]:
-    """
-    Get embeddings for texts in a DataFrame using chamois.
-    
-    Args:
-        df: DataFrame containing case_text, case_id, and case_title columns
-        num_rows: Number of rows to process (default: 10)
-        
-    Returns:
-        List of dictionaries containing case information and embeddings
-    """
-    try:
-        # Prepare the texts and metadata
-        texts = df.head(num_rows)['case_text'].tolist()
-        case_ids = df.head(num_rows)['case_id'].tolist()
-        case_titles = df.head(num_rows)['case_title'].tolist()
-        
-        logger.info(f"Processing {len(texts)} texts...")
-        
-        # Get embeddings using chamois
-        embeddings: List[chamois.Embedding] = await process_texts(texts)
-        
-        # create list of dictionaries with case_id, case_title, case_text, and embeddings
-        results = []
-        for text, embedding, case_id, case_title in zip(texts, embeddings, case_ids, case_titles):
-            results.append({
-                'case_id': case_id,
-                'case_title': case_title,
-                'case_text': text,
-                'embeddings': embedding.embedding  # Get the raw embedding vector
-            })
-            
-        logger.info(f"Successfully processed {len(results)} embeddings")
-        return results
-        
-    except Exception as e:
-        logger.error(f"Error processing embeddings: {str(e)}")
-        raise
-
-# Function to run the async function
-def get_embeddings_sync(
-    df: pd.DataFrame,
-    num_rows: int = 10
-) -> List[Dict[str, Any]]:
-    """
-    Synchronous wrapper for get_embeddings_chamois.
-    
-    Args:
-        df: DataFrame containing case_text, case_id, and case_title columns
-        num_rows: Number of rows to process (default: 10)
-        
-    Returns:
-        List of dictionaries containing case information and embeddings
-    """
-    return asyncio.run(get_embeddings_chamois(df, num_rows))
 
 df = pd.read_csv('../data/legal_text_first_1000.csv')
 
@@ -224,5 +156,19 @@ for col in df_display.columns:
     df_display[col] = df_display[col].apply(lambda x: wrap_text(x, 60))
     
 print(tabulate(df_display, headers='keys', tablefmt='grid', showindex=False))
+
+all_cases_embeddings = get_embeddings(df)
+
+
+# Save embeddings to a csv file
+df_embeddings = pd.DataFrame(all_cases_embeddings)
+
+for col in df_embeddings.columns:
+    df_embeddings[col] = df_embeddings[col].apply(lambda x: wrap_text(x, 60))
     
-    
+print(tabulate(df_embeddings.head(3), headers='keys', tablefmt='grid', showindex=False))
+
+df_embeddings.to_csv('../data/all_cases_embeddings.csv', index=False)
+
+print(f"Embeddings saved to all_cases_embeddings.csv")
+
